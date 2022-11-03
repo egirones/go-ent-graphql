@@ -39,6 +39,10 @@ type TodoEdges struct {
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
 	loadedTypes [2]bool
+	// totalCount holds the count of the edges above.
+	totalCount [2]map[string]int
+
+	namedChildren map[string][]*Todo
 }
 
 // ChildrenOrErr returns the Children value or an error if the edge
@@ -179,6 +183,30 @@ func (t *Todo) String() string {
 	builder.WriteString(fmt.Sprintf("%v", t.Priority))
 	builder.WriteByte(')')
 	return builder.String()
+}
+
+// NamedChildren returns the Children named value or an error if the edge was not
+// loaded in eager-loading with this name.
+func (t *Todo) NamedChildren(name string) ([]*Todo, error) {
+	if t.Edges.namedChildren == nil {
+		return nil, &NotLoadedError{edge: name}
+	}
+	nodes, ok := t.Edges.namedChildren[name]
+	if !ok {
+		return nil, &NotLoadedError{edge: name}
+	}
+	return nodes, nil
+}
+
+func (t *Todo) appendNamedChildren(name string, edges ...*Todo) {
+	if t.Edges.namedChildren == nil {
+		t.Edges.namedChildren = make(map[string][]*Todo)
+	}
+	if len(edges) == 0 {
+		t.Edges.namedChildren[name] = []*Todo{}
+	} else {
+		t.Edges.namedChildren[name] = append(t.Edges.namedChildren[name], edges...)
+	}
 }
 
 // Todos is a parsable slice of Todo.

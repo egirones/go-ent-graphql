@@ -18,15 +18,18 @@ import (
 // TodoQuery is the builder for querying Todo entities.
 type TodoQuery struct {
 	config
-	limit        *int
-	offset       *int
-	unique       *bool
-	order        []OrderFunc
-	fields       []string
-	predicates   []predicate.Todo
-	withChildren *TodoQuery
-	withParent   *TodoQuery
-	withFKs      bool
+	limit             *int
+	offset            *int
+	unique            *bool
+	order             []OrderFunc
+	fields            []string
+	predicates        []predicate.Todo
+	withChildren      *TodoQuery
+	withParent        *TodoQuery
+	withFKs           bool
+	modifiers         []func(*sql.Selector)
+	loadTotal         []func(context.Context, []*Todo) error
+	withNamedChildren map[string]*TodoQuery
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -413,6 +416,9 @@ func (tq *TodoQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Todo, e
 		node.Edges.loadedTypes = loadedTypes
 		return node.assignValues(columns, values)
 	}
+	if len(tq.modifiers) > 0 {
+		_spec.Modifiers = tq.modifiers
+	}
 	for i := range hooks {
 		hooks[i](ctx, _spec)
 	}
@@ -432,6 +438,18 @@ func (tq *TodoQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Todo, e
 	if query := tq.withParent; query != nil {
 		if err := tq.loadParent(ctx, query, nodes, nil,
 			func(n *Todo, e *Todo) { n.Edges.Parent = e }); err != nil {
+			return nil, err
+		}
+	}
+	for name, query := range tq.withNamedChildren {
+		if err := tq.loadChildren(ctx, query, nodes,
+			func(n *Todo) { n.appendNamedChildren(name) },
+			func(n *Todo, e *Todo) { n.appendNamedChildren(name, e) }); err != nil {
+			return nil, err
+		}
+	}
+	for i := range tq.loadTotal {
+		if err := tq.loadTotal[i](ctx, nodes); err != nil {
 			return nil, err
 		}
 	}
@@ -501,6 +519,9 @@ func (tq *TodoQuery) loadParent(ctx context.Context, query *TodoQuery, nodes []*
 
 func (tq *TodoQuery) sqlCount(ctx context.Context) (int, error) {
 	_spec := tq.querySpec()
+	if len(tq.modifiers) > 0 {
+		_spec.Modifiers = tq.modifiers
+	}
 	_spec.Node.Columns = tq.fields
 	if len(tq.fields) > 0 {
 		_spec.Unique = tq.unique != nil && *tq.unique
@@ -597,6 +618,20 @@ func (tq *TodoQuery) sqlQuery(ctx context.Context) *sql.Selector {
 		selector.Limit(*limit)
 	}
 	return selector
+}
+
+// WithNamedChildren tells the query-builder to eager-load the nodes that are connected to the "children"
+// edge with the given name. The optional arguments are used to configure the query builder of the edge.
+func (tq *TodoQuery) WithNamedChildren(name string, opts ...func(*TodoQuery)) *TodoQuery {
+	query := &TodoQuery{config: tq.config}
+	for _, opt := range opts {
+		opt(query)
+	}
+	if tq.withNamedChildren == nil {
+		tq.withNamedChildren = make(map[string]*TodoQuery)
+	}
+	tq.withNamedChildren[name] = query
+	return tq
 }
 
 // TodoGroupBy is the group-by builder for Todo entities.
